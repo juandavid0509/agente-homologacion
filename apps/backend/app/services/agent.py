@@ -1767,12 +1767,43 @@ def generate_response(
                 current_text=text,
             )
 
+        total = len(_documentos(db, hechos.get("tipo")))
+        entregados = total - len(_documentos_faltantes(db, hechos))
+
+        # «Sí, todo correcto»: el estudiante cree que ya subió el documento,
+        # pero nada llegó al chat. Se aclara en lugar de pedirlo en frío.
+        if _is_affirmative(norm) and not _is_negative(norm):
+            return _respond(
+                user, db, conversation, hechos,
+                fallback=(
+                    f"¡Gracias por confirmar, {nombre}! Aún no veo **{siguiente}** "
+                    "adjunto en el chat: los documentos me llegan con el clip 📎. "
+                    f"Súbelo y apenas llegue sigo con tu solicitud "
+                    f"(llevas {entregados} de {total} documentos)."
+                ),
+                use_llm=False,
+                current_text=text,
+            )
+
+        # «No lo tengo todavía»: se queda esperando, sin atosigar.
+        if _is_negative(norm):
+            return _respond(
+                user, db, conversation, hechos,
+                fallback=(
+                    f"No te preocupes, {nombre}: te espero aquí. Cuando tengas "
+                    f"**{siguiente}**, súbelo con el clip 📎 "
+                    f"(llevas {entregados} de {total} documentos) y continuamos."
+                ),
+                use_llm=False,
+                current_text=text,
+            )
+
         return _respond(
             user, db, conversation, hechos,
             fallback=(
                 f"Con gusto seguimos, {nombre}. Usa el clip 📎 para subir "
-                f"**{siguiente}**. Llevas {len(_documentos_hechos(hechos))} de "
-                f"{len(_documentos(db, hechos.get('tipo')))} documentos."
+                f"**{siguiente}**. Llevas {entregados} de "
+                f"{total} documentos."
             ),
             use_llm=False,
             current_text=text,

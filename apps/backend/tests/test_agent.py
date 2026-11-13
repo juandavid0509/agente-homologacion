@@ -163,6 +163,37 @@ def test_document_upload_advances_flow(db, user, monkeypatch, normativa_rules):
     assert "Comprobante de pago" in response
 
 
+def test_ask_docs_aclara_cuando_afirma_sin_documento_adjunto(
+    db, user, normativa_rules
+):
+    conv = conv_service.create_conversation(db, user)
+    conv.hechos = {
+        **conv_service.DEFAULT_HECHOS,
+        "state": "ASK_DOCS",
+        "materia": "Cálculo Diferencial",
+        "tipo": "EXTERNA",
+        "nota": 4.2,
+        "creditos": 3,
+        "docs_subidos": 0,
+    }
+    db.add(conv)
+    db.commit()
+
+    # «Sí, todo correcto» sin nada subido: se aclara, no se estanca ni avanza.
+    response = _turn(db, user, conv, "Sí, todo correcto")
+    db.refresh(conv)
+    assert conv.hechos["state"] == "ASK_DOCS"
+    assert "Aún no veo" in response
+    assert "clip" in response
+    assert "0 de 4" in response
+
+    # «Todavía no lo tengo»: se espera con amabilidad.
+    response = _turn(db, user, conv, "Todavía no lo tengo")
+    db.refresh(conv)
+    assert conv.hechos["state"] == "ASK_DOCS"
+    assert "No te preocupes" in response
+
+
 def test_requisitos_se_leen_de_la_base(db, user, normativa_rules):
     conv = conv_service.create_conversation(db, user)
     conv.hechos = {**conv_service.DEFAULT_HECHOS, "tipo": "EXTERNA"}
@@ -473,7 +504,7 @@ def test_eliminar_chat_descarta_el_borrador_y_sus_documentos(db, user):
     assert db.query(Documento).filter(Documento.solicitud_id == solicitud_id).count() == 0
 
 
-def test_eliminar_chat_conserva_una_solicitud_radicada(db, user):
+def test_el_chat_de_una_solicitud_radicada_no_se_puede_borrar(db, user):
     conv = conv_service.create_conversation(db, user)
     hechos = {
         **conv_service.DEFAULT_HECHOS,
@@ -487,8 +518,16 @@ def test_eliminar_chat_conserva_una_solicitud_radicada(db, user):
     }
     solicitud = solicitudes.sincronizar(db, conv, hechos, finalizar=True)
 
-    conv_service.delete_conversation(db, conv.conversacion_id, user.estudiante_id)
+    with pytest.raises(conv_service.ConversationLockedError):
+        conv_service.delete_conversation(db, conv.conversacion_id, user.estudiante_id)
 
+    # El chat y su historial siguen intactos, junto con la solicitud radicada.
+    assert (
+        db.query(Conversacion)
+        .filter(Conversacion.conversacion_id == conv.conversacion_id)
+        .first()
+        is not None
+    )
     assert (
         db.query(Solicitud)
         .filter(Solicitud.solicitud_id == solicitud.solicitud_id)
@@ -499,6 +538,119 @@ def test_eliminar_chat_conserva_una_solicitud_radicada(db, user):
 
 # ---------------------------------------------------------------------------
 # Correcciones del estudiante
+# ---------------------------------------------------------------------------
+def test_consulta_requisitos_responde_por_el_tipo_nombrado(db, user, normativa_rules):
+    conv = conv_service.create_conversation(db, user)
+    _turn(db, user, conv, "¿Qué requisitos necesito para homologación interna?")
+    _turn(db, user, conv, "Es interna")
+    db.refresh(conv)
+    assert conv.hechos["tipo"] == "INTERNA"
+
+    response = _turn(db, user, conv, "¿Y los requisitos para una materia externa?")
+    db.refresh(conv)
+
+    # La respuesta ya no repite la información interna: consulta la externa.
+    assert conv.hechos["tipo"] == "EXTERNA"
+    assert "3.8" in response
+    assert "Comprobante de pago" in response
+    assert "3.5" not in response
+
+
+def test_consulta_de_requisitos_en_medio_del_flujo_no_cambia_el_tramite(
+    db, user, normativa_rules
+):
+    conv = conv_service.create_conversation(db, user)
+    conv.hechos = {
+        **conv_service.DEFAULT_HECHOS,
+        "state": "ASK_NOTA",
+        "materia": "Cálculo Diferencial",
+        "tipo": "INTERNA",
+    }
+    db.add(conv)
+    db.commit()
+
+    response = _turn(db, user, conv, "¿Qué documentos pide la homologación externa?")
+    db.refresh(conv)
+
+    # Muestra la información de la externa, pero el trámite sigue siendo interna.
+    assert conv.hechos["tipo"] == "INTERNA"
+    assert "Comprobante de pago" in response
+    assert "Retomemos: ¿cuál fue la nota" in response
+
+
+# ---------------------------------------------------------------------------
+# Estado de las solicitudes del estudiante
+# ---------------------------------------------------------------------------
+def test_consulta_estado_muestra_solo_sus_solicitudes(db, user, other_user, normativa_rules):
+    from datetime import datetime
+
+    # Solicitud de otro estudiante: nunca debe aparecer en la consulta.
+    db.add(
+        Solicitud(
+            estudiante_id=other_user.estudiante_id,
+            materia_origen="Materia Ajena",
+            estado=1,
+        )
+    )
+    radicada = Solicitud(
+        estudiante_id=user.estudiante_id,
+        materia_origen="Cálculo Integral",
+        tipo_homologacion="EXTERNA",
+        nota_aportada=4.2,
+        estado=1,
+        fecha_registro=datetime(2026, 11, 10),
+    )
+    db.add(radicada)
+    db.commit()
+
+    conv = conv_service.create_conversation(db, user)
+    response = _turn(db, user, conv, "¿Cómo va mi solicitud de homologación?")
+    db.refresh(conv)
+
+    assert conv.hechos["state"] == "IDLE"  # no interrumpe ningún flujo en curso
+    assert "Pendiente de aprobación" in response
+    assert "Cálculo Integral" in response
+    assert "Materia Ajena" not in response
+    assert "Luis" not in response
+
+
+def test_consulta_estado_aprobada_y_rechazada(db, user):
+    from datetime import datetime
+
+    db.add(
+        Solicitud(
+            estudiante_id=user.estudiante_id,
+            materia_origen="Cálculo Integral",
+            estado=2,
+            fecha_registro=datetime(2026, 11, 10),
+        )
+    )
+    db.add(
+        Solicitud(
+            estudiante_id=user.estudiante_id,
+            materia_origen="Electiva V",
+            estado=3,
+            fecha_registro=datetime(2026, 11, 11),
+        )
+    )
+    db.commit()
+
+    conv = conv_service.create_conversation(db, user)
+    response = _turn(db, user, conv, "quiero consultar el estado de mi trámite")
+
+    assert "Aprobada" in response
+    assert "Rechazada" in response
+
+
+def test_consulta_estado_sin_solicitudes(db, user):
+    conv = conv_service.create_conversation(db, user)
+    response = _turn(db, user, conv, "¿En qué estado está mi trámite?")
+
+    assert "Aún no tienes solicitudes registradas" in response
+
+
+# ---------------------------------------------------------------------------
+# Requisitos por tipo
 # ---------------------------------------------------------------------------
 def test_corrige_tipo_en_medio_del_flujo(db, user, normativa_rules):
     conv = conv_service.create_conversation(db, user)

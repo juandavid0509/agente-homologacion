@@ -35,7 +35,26 @@ const inlineFormat = (text: string) =>
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
 
-// Render seguro y legible: títulos, viñetas, listas numeradas y negritas.
+// Estados de solicitud que se pintan como insignia de color en el chat.
+const STATUS_BADGES = [
+  {
+    match: /pendiente/i,
+    badge:
+      'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
+  },
+  {
+    match: /aprobada/i,
+    badge:
+      'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300',
+  },
+  {
+    match: /rechazada/i,
+    badge: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
+  },
+];
+
+// Render seguro y legible: títulos, viñetas, listas numeradas, negritas y
+// insignias de color para el estado de las solicitudes.
 const FormattedText = ({ text }: { text: string }) => {
   const html = text
     .split('\n')
@@ -49,10 +68,32 @@ const FormattedText = ({ text }: { text: string }) => {
         return `<div class="font-bold ${size} mt-2 mb-1">${inlineFormat(heading[2])}</div>`;
       }
 
+      // Líneas de título con emoji de estado (⏳ ✅ ❌ 📝).
+      if (/^(⏳|✅|❌|📝)\s+/.test(line)) {
+        const color = line.startsWith('⏳')
+          ? 'text-amber-700 dark:text-amber-400'
+          : line.startsWith('✅')
+            ? 'text-emerald-700 dark:text-emerald-400'
+            : line.startsWith('❌')
+              ? 'text-red-700 dark:text-red-400'
+              : '';
+        return `<div class="flex items-center gap-2 mt-2 font-semibold ${color}">${inlineFormat(line)}</div>`;
+      }
+
       if (/^[•\-]\s+/.test(line)) {
-        return `<div class="flex gap-2"><span class="select-none">•</span><span>${inlineFormat(
-          line.replace(/^[•\-]\s+/, '')
-        )}</span></div>`;
+        const contenido = line.replace(/^[•\-]\s+/, '');
+
+        // «• **Estado:** Pendiente de aprobación» → insignia de color.
+        const estado = contenido.match(/^\*\*Estado:\*\*\s*(.+)$/);
+        if (estado) {
+          const valor = estado[1].trim();
+          const insignia = STATUS_BADGES.find((s) => s.match.test(valor));
+          if (insignia) {
+            return `<div class="mt-1.5"><span class="inline-block px-3 py-1 rounded-full text-xs font-semibold ${insignia.badge}">${escapeHtml(valor)}</span></div>`;
+          }
+        }
+
+        return `<div class="flex gap-2"><span class="select-none">•</span><span>${inlineFormat(contenido)}</span></div>`;
       }
 
       if (/^\d+\.\s+/.test(line)) {
@@ -113,8 +154,10 @@ export default function Dashboard() {
       await loadMessages(convId);
     } catch {
       setError('No se pudo cargar el historial de esta conversación.');
+    } finally {
+      focusInput();
     }
-  }, [loadMessages]);
+  }, [loadMessages, focusInput]);
 
   // Cargar historial de trámites terminados y el borrador en curso.
   useEffect(() => {
@@ -144,6 +187,7 @@ export default function Dashboard() {
           setConversationId(null);
           setMessages([]);
         }
+        focusInput();
       } catch {
         if (active) setError('No se pudo conectar con el servidor. Verifica que el backend esté encendido.');
       } finally {
@@ -153,7 +197,7 @@ export default function Dashboard() {
 
     init();
     return () => { active = false; };
-  }, [user, loadMessages]);
+  }, [user, loadMessages, focusInput]);
 
   const refreshConversations = async (selectId?: number) => {
     if (!user) return;
@@ -176,11 +220,20 @@ export default function Dashboard() {
       await loadMessages(res.data.id);
     } catch {
       setError('No se pudo crear una conversación nueva.');
+    } finally {
+      focusInput();
     }
   };
 
   const deleteConversation = async (id: number) => {
     if (!user) return;
+    const objetivo = conversations.find((c) => c.id === id);
+    if (objetivo?.locked) {
+      setError(
+        'Este chat está asociado a una solicitud radicada y no se puede eliminar.'
+      );
+      return;
+    }
     if (!window.confirm('¿Eliminar este chat? Esta acción no se puede deshacer.')) return;
     try {
       await api.delete(`/conversations/${id}`, { params: { user_id: user.id } });
@@ -190,8 +243,13 @@ export default function Dashboard() {
         setMessages([]);
         setSavedNotice(null);
       }
-    } catch {
-      setError('No se pudo eliminar el chat. Inténtalo de nuevo.');
+    } catch (e: any) {
+      const detail = e.response?.data?.detail;
+      setError(
+        typeof detail === 'string'
+          ? detail
+          : 'No se pudo eliminar el chat. Inténtalo de nuevo.'
+      );
     }
   };
 
@@ -239,6 +297,7 @@ export default function Dashboard() {
       ]);
     } finally {
       setIsTyping(false);
+      focusInput();
     }
   };
 
@@ -294,10 +353,15 @@ export default function Dashboard() {
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      focusInput();
     }
   };
 
   const firstName = user?.name?.split(' ')[0] || 'estudiante';
+  // El chat de una solicitud radicada queda bloqueado: no se puede borrar.
+  const currentLocked = conversations.some(
+    (c) => c.id === conversationId && c.locked
+  );
 
   return (
     <div className="flex h-screen bg-[#F3F4F6] dark:bg-gray-900 font-sans">
@@ -342,16 +406,30 @@ export default function Dashboard() {
                 >
                   <MessageSquare size={18} className="mt-0.5 shrink-0" />
                   <span className="line-clamp-2 break-words">{conv.title}</span>
-                  <CheckCircle2 size={14} className="mt-1 shrink-0 text-emerald-500" />
+                  {conv.locked ? (
+                    <Lock size={14} className="mt-1 shrink-0 text-emerald-500" />
+                  ) : (
+                    <CheckCircle2 size={14} className="mt-1 shrink-0 text-emerald-500" />
+                  )}
                 </button>
-                <button
-                  onClick={() => deleteConversation(conv.id)}
-                  title="Eliminar chat"
-                  aria-label="Eliminar chat"
-                  className="mt-1 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-                >
-                  <Trash2 size={16} />
-                </button>
+                {conv.locked ? (
+                  <span
+                    title="Chat de una solicitud radicada: no se puede eliminar"
+                    aria-label="Chat protegido"
+                    className="mt-1 p-2 text-gray-300 dark:text-gray-600"
+                  >
+                    <Lock size={16} />
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => deleteConversation(conv.id)}
+                    title="Eliminar chat"
+                    aria-label="Eliminar chat"
+                    className="mt-1 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -392,7 +470,7 @@ export default function Dashboard() {
                 {user?.name?.[0]}
               </div>
             </div>
-            {conversationId && (
+            {conversationId && !currentLocked && (
               <button
                 onClick={() => deleteConversation(conversationId)}
                 title="Eliminar chat actual"
@@ -401,6 +479,14 @@ export default function Dashboard() {
               >
                 <Trash2 size={18} />
               </button>
+            )}
+            {conversationId && currentLocked && (
+              <span
+                title="Chat de una solicitud radicada: no se puede eliminar"
+                className="p-2 text-emerald-500"
+              >
+                <Lock size={18} />
+              </span>
             )}
           </div>
         </header>
@@ -473,13 +559,14 @@ export default function Dashboard() {
             </button>
 
             <input
+              ref={inputRef}
               type="text"
               placeholder={`Escríbele a Lía, ${firstName}…`}
               className="flex-1 bg-transparent outline-none text-[15px] text-gray-700 dark:text-gray-200 placeholder-gray-400"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-              disabled={isTyping || isLoadingHistory}
+              disabled={isLoadingHistory}
             />
             <button
               onClick={sendMessage}
