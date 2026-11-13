@@ -1,0 +1,8 @@
+{
+  "saludos": ["hola", "buenos dias", "buenas tardes", "buenas noches", "que tal", "hey"],
+  "cancelar": ["cancelar", "detente", "olvidalo", "no mejor", "espera", "para", "stop", "reiniciar"],
+  "info": ["requisito", "requisitos", "documento", "documentos", "informacion", "información", "proceso", "como es", "cómo es", "que necesito", "qué necesito", "pasos"],
+  "iniciar": ["iniciar", "empezar", "crear", "hacer", "quiero homologar", "solicitud"],
+  "homologable": ["homologable", "sirve", "se puede homologar", "es valida", "es válida", "es valido"],
+  "stop_words": ["la", "el", "los", "las", "de", "para", "materia", "asignatura", "quiero", "saber", "si", "es", "una", "un", "me", "saber", "solicitar", "homologar", "homologación"]
+}

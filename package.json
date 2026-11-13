@@ -1,0 +1,13 @@
+{
+  "name": "agente-homologacion",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n \"FRONTEND,BACKEND\" -c \"cyan,green\" \"pnpm --filter frontend dev\" \"pnpm --filter backend dev\"",
+    "test": "pnpm --filter frontend test && pnpm --filter backend test",
+    "seed": "pnpm --filter backend seed"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

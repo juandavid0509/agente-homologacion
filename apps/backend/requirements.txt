@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+pymysql
+pydantic
+pydantic-settings
+python-multipart
+python-dotenv
+argon2-cffi
+ollama
+pypdf
+httpx==0.27.2
+pytest

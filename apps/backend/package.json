@@ -1,0 +1,11 @@
+{
+  "name": "backend",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --port 8000",
+    "start": "venv\\Scripts\\python.exe -m uvicorn app.main:app --port 8000",
+    "test": "venv\\Scripts\\python.exe -m pytest -q",
+    "seed": "venv\\Scripts\\python.exe seed.py"
+  }
+}
